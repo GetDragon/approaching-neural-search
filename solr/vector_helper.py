@@ -1,10 +1,14 @@
+import torch
 from sentence_transformers import SentenceTransformer
 
 class VectorHelper:
     def execute(self, sentence):
         # Load or create a SentenceTransformer model
 
-        model = SentenceTransformer('setu4993/LaBSE')
+        model = SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')
+        if torch.cuda.is_available():
+            model = model.to(torch.device("cuda"))
+
         # Compute sentence embeddings
         embeddings = model.encode([sentence])
 

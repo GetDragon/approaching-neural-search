@@ -3,6 +3,8 @@ import pysolr
 import time
 import json
 import os
+import re
+import copy
 
 from vector_helper import VectorHelper
 
@@ -10,8 +12,27 @@ from vector_helper import VectorHelper
 SOLR_ADDRESS = 'http://localhost:8983/solr/Legis'
 
 BATCH_SIZE = 100 # Indexa cada 100 registros
+MIN_SENTENCE_LEN = 30
 # Create a client instance
 solr = pysolr.Solr(SOLR_ADDRESS, always_commit=True)
+
+def split_sentences(text):
+    # Lista de caracteres que suelen indicar el final de una oración
+    end_punctuations = ['.', '!', '?']
+
+    sentences = []
+    current_sentence = ''
+    
+    for char in text:
+        current_sentence += char
+        if char in end_punctuations and len(current_sentence) > MIN_SENTENCE_LEN:
+            sentences.append(current_sentence.strip())  # Agregar la oración a la lista
+            current_sentence = ''
+
+    if current_sentence:
+        sentences.append(current_sentence.strip())
+
+    return sentences
 
 def index_documents(documents_filename):
     vh = VectorHelper()
@@ -34,22 +55,45 @@ def index_documents(documents_filename):
         index = 0
         documents= []
         for objeto in contenido:
-            vectores = vh.execute(objeto["content"])
-            objeto["vector"] = json.loads(vectores)
-            #print(objeto)
-            # append JSON document to a list
-            documents.append(objeto)
-            index += 1
+            if len(str(objeto["content"]).strip()) == 0: continue
+
+            objeto["content"] = re.sub(r'\[§\s*(\d+)\]', r'\1 ', objeto["content"])
+            sentences = split_sentences(objeto["content"])
+
+            if len(sentences) > 1:
+                print("Partiendo párrafo...", len(sentences))
+                sentence_count = 0
+                for s in sentences:
+                    copy_obj = copy.deepcopy(objeto);
+                    copy_obj["id"] = f"{copy_obj['id']}_{sentence_count}"
+                    copy_obj["content"] = s
+                    vectores = vh.execute(s)
+                    objeto["vector"] = json.loads(vectores)
+                    documents.append(copy_obj) # append JSON document to a list
+                    index += 1
+                    sentence_count += 1
+            else:
+                vectores = vh.execute(sentences[0])
+                objeto["vector"] = json.loads(vectores)
+                documents.append(objeto) # append JSON document to a list
+                index += 1
 
             # to index batches of documents at a time
             if index % BATCH_SIZE == 0 and index != 0:
                 # how you'd index data to Solr
-                solr.add(documents)
+                try:
+                    solr.add(documents)
+                except Exception as e:
+                    print(e)
+                
                 documents = []
                 print("==== indexed {} documents ======".format(index))
         # to index the rest, when 'documents' list < BATCH_SIZE
         if documents:
-            solr.add(documents)
+            try:
+                solr.add(documents)
+            except Exception as e:
+                print(e)
             print("==== indexed {} documents ======".format(len(documents)))
         
         print("Finished")
@@ -58,9 +102,10 @@ def index_documents(documents_filename):
 
 def main():
     initial_time = time.time()
-    directorio = "D:\Data\solr Stuff\solr-json"
+    idcontenido = "regaduanas"
+    directorio = f"D:\Data\solr Stuff\{idcontenido}"
 
-    solr.delete(q='*:*')
+    solr.delete(q=f'bookid:{idcontenido}')
     
     for archivo in os.listdir(directorio):
         if archivo.endswith(".json"):
